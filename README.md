@@ -17,3 +17,25 @@
 * 在构建以下Seurat object时，取标准min.cells,min.genes分别为10,2,即分别代表每个细胞至少包含10个表达基因,每个基因至少在2个基因中表达.
 
 以上数据处理都是根据自己的一个经验测试的而已，没有很大的根据，如有更好的方法，[please contact me email]:1772898816@qq.com or yejg2013@gmail.com
+
+
+## 3)使用的工具 **rstudio**
+主要使用的 r packages：
+library(Seurat) 
+library(data.table) 
+library(NMF)
+library(rsvd)
+library(Rtsne)
+library(ggplot2)
+library(cowplot)
+library(sva)
+library(igraph)
+library(cccd)
+library(KernSmooth)
+library(beeswarm)
+library(stringr)
+library(formatR)
+source('../tools.R')  #自己写的一些工具函数
+library(DESeq2)
+
+不一一介绍安装（自己google，度娘去）
