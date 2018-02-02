@@ -24,9 +24,9 @@
 ``` r
 library(Seurat)
 library(data.table) 
-library(NMF)//r
-library(rsvd)//r
-library(Rtsne)//r
+library(NMF)
+library(rsvd)
+library(Rtsne)
 library(ggplot2)
 library(cowplot)
 library(sva)
@@ -45,7 +45,7 @@ library(DESeq2)
 结果都以*markdown*的格式展示在各自文件夹**Human.Monkey,Mouse**的*docx,html*文件中
 
 ## 5）示例图片
-
+![github own] https://github.com/yejg2017/C1-single-cell-analysis/图片1.png
 
 
 
