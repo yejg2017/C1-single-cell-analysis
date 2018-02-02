@@ -1,0 +1,439 @@
+---
+title: "Human analysis on ITGB4:Negative and Positive"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,message = FALSE,warning = FALSE,tidy = TRUE,fig.width=12, fig.height=10,highlight = TRUE)
+```
+
+### Load the packages
+```{r}
+library(Seurat)
+library(data.table)
+library(NMF)
+library(rsvd)
+library(Rtsne)
+library(ggplot2)
+library(cowplot)
+library(sva)
+library(igraph)
+library(cccd)
+library(KernSmooth)
+library(beeswarm)
+library(stringr)
+library(formatR)
+source('../tools.R')
+library(DESeq2)
+```
+
+###  The function will be used in the follow
+```{r,echo=FALSE}
+#  read data function
+Load_data<-function(data_dir,condition.sample_dir=NULL){
+  dat<-read.table(data_dir)
+  
+  if(!is.null(condition.sample_dir)){
+    condition.sample.data<-read.table(condition.sample_dir)
+    condition.sample<-as.character(condition.sample.data[,'sample'])
+    condition<-as.character(condition.sample.data[,'condition'])
+    
+    return(list(data.frame(dat[,condition.sample]),condition))
+  }else{
+    return(dat)
+  }
+}
+
+#  Create sub Seurate object
+Sub_Seurat<-function(object,ident.1,ident.2){
+  #  ident.1:  the first ident selected in the object
+  #  ident.2:  the second ident selected  in the object
+  cells1<-WhichCells(object=object,ident = ident.1)
+  cells2<-WhichCells(object=object,ident = ident.2)
+  
+  cells<-c(cells1,cells2)
+  Sub.ident<-object@ident[object@cell.names%in%cells]
+  Subobj<-SubsetData(object = object,cells.use = cells,ident.use = Sub.ident)
+  
+  return(Subobj)
+}
+
+#  Return the genes after DESqe analysis
+# DESeq_Genes<-function(p.data,p.val=0.05,num.genes=20,Order=TRUE,bar=TRUE){
+#   #  p.data: the data from DESeq analysis:genes,p.val
+#   #  p.val :the p.val cutoff
+#   #  Order: Wheter return the genes after p.val rank
+#   
+#   p.genes<-data.frame(na.omit(p.data))
+#   
+#   if(Order){
+#     p.genes<-p.genes[order(p.genes$p_val),,drop=FALSE]
+#   }
+#   
+#   genes<-rownames(p.genes)[which(p.genes$p_val<p.val)]
+#   p.genes<-p.genes[genes,,drop=FALSE]
+#   p.genes$gene<-genes
+#   
+#   if(bar){
+#     print(ggplot(data = p.genes[1:num.genes,,drop=FALSE])+xlab('gene')+
+#             geom_bar(aes(x=reorder(gene,-p_val),y=p_val,fill=gene),stat = 'identity')+
+#             theme(axis.text.x = element_text(face="bold",size=10,hjust = 1,angle = 90),
+#                   legend.position = 'none'))
+#   }
+#   return(genes)
+# }
+
+
+###  Barplot
+Group_Bar<-function(count.data,group,Gv.return=FALSE){
+  
+  if(dim(count.data)[2]!=length(group)){
+    stop('Invalid count data')
+  }
+  nGroups<-length(unique(group))
+  nGene<-dim(count.data)[1]
+  uniq.group<-unique(group)
+  
+  Group.per.gene.cov<-lapply(uniq.group,function(x){
+    counts<-rowSums(count.data[,group%in%x,drop=FALSE])/nGene
+    counts<-data.frame(counts)
+    colnames(counts)<-x
+    return(counts)
+  })
+  
+  Groups.converage<-as.data.frame(Group.per.gene.cov)
+  barplot(as.matrix(Groups.converage),beside = TRUE,ylab="Counts per gene")
+  
+  if(Gv.return){
+    return(Groups.converage)
+  }
+}
+```
+
+
+##  Analysis based on cell size
+According to the previous analysis on sample group,remove the group **hc001** and cell size **2um**
+###  Read data
+###  Data QA
+```{r}
+human.only.pro<-Load_data(data_dir = '../data/human.txt')
+important.genes<-c('ABCB5','KRT19','ACTB','KRT12','KRT5',
+                   'GAPDH','KRT3','PAX6','WNT7A','KRT14','TP63','KRT10')
+human.only.pro<-human.only.pro[,colnames(human.only.pro)[unlist(lapply(colnames(human.only.pro),
+                    function(x)return(str_split(x,'_')[[1]][2])))%in%c('10um','20um','6um')]]
+human.only.pro<-human.only.pro[,colnames(human.only.pro)[!unlist(lapply(colnames(human.only.pro),
+                             function(x)return(str_split(x,'_')[[1]][1])))%in%c('hc001','shoutiao')]]
+```
+
+### Split the data according to whether the gene ITGB4 is Negative or negative
+```{r}
+library(ggplot2)
+library(reshape2)
+ITGB4<-as.integer(human.only.pro['ITGB4',])
+Positive.idx<-which(ITGB4>0)
+Negative.idx<-which(ITGB4==0)
+Positive.data<-human.only.pro[,Positive.idx,drop=FALSE]
+Negative.data<-human.only.pro[,Negative.idx,drop=FALSE]
+```
+
+## Figure Explore.1
+```{r}
+Positive.data<-data.frame(t(Positive.data[important.genes,]))
+Negative.data<-data.frame(t(Negative.data[important.genes,]))
+plot.data<-rbind(Positive.data,Negative.data)
+plot.data$condition<-rep(c('Positive','Negative'),times=c(dim(Positive.data)[1],dim(Negative.data)[1]))
+cell.size<-c(unlist(lapply(rownames(Positive.data),function(x) return(str_split(x,'_')[[1]][2]))),
+             unlist(lapply(rownames(Negative.data),function(x) return(str_split(x,'_')[[1]][2]))))
+
+
+plot.data$cell.size<-cell.size
+```
+
+
+```{r}
+X<-melt(plot.data)
+for(var in as.character(unique(X$variable))){
+  p<-ggplot(data = X[X$variable==var,],aes(y=value,x=condition,fill=cell.size))
+  print(p+geom_violin(trim = FALSE)+geom_jitter(height = 0, width = 0.1)+guides(fill=guide_legend(title="Cell Size")))
+}
+
+
+```
+
+```{r}
+for(var in as.character(unique(X$variable))){
+  p<-ggplot(data = X[X$variable==var,],aes(y=value,x=condition,fill=cell.size))
+  print(p+geom_boxplot()+guides(fill=guide_legend(title="Cell Size")))
+}
+```
+
+
+```{r}
+ggplot(data = X,aes(x=value,fill=variable))+
+  geom_density(kernel='gaussian')+scale_x_log10()+facet_wrap(~condition+cell.size)
+
+
+ggplot(data = X,aes(x=value,fill=variable))+
+  geom_density(kernel='gaussian',position = 'stack')+scale_x_log10()+facet_wrap(~condition+cell.size)
+
+
+ggplot(data = X,aes(x=value,fill=variable))+
+   geom_histogram()+scale_x_log10()+facet_wrap(~condition+cell.size)
+
+
+```
+
+###  Create Seurat object and not caculate DESeq 
+```{r}
+Positive.pbmc<-DESeq_SeuratObj(X=Positive.data,min.cells = 10,min.genes = 2)
+Positive.sample.group<-unlist(lapply(Positive.pbmc@cell.names,function(x)return(str_split(x,'_')[[1]][1])))
+Positive.sample.cellsize<-unlist(lapply(Positive.pbmc@cell.names,function(x)return(str_split(x,'_')[[1]][2])))
+
+Positive.pbmc<-SetIdent(Positive.pbmc,cells.use = Positive.pbmc@cell.names,ident.use = Positive.sample.cellsize)
+```
+
+```{r}
+Negative.pbmc<-DESeq_SeuratObj(X=Negative.data,min.cells = 10,min.genes = 2)
+Negative.sample.group<-unlist(lapply(Negative.pbmc@cell.names,function(x)return(str_split(x,'_')[[1]][1])))
+Negative.sample.cellsize<-unlist(lapply(Negative.pbmc@cell.names,function(x)return(str_split(x,'_')[[1]][2])))
+
+Negative.pbmc<-SetIdent(Negative.pbmc,cells.use = Negative.pbmc@cell.names,ident.use = Negative.sample.cellsize)
+```
+
+Accordind to the Dispersion vs Avearge expression of Positive and Negative data on ITGB4,they tell us that the although they have similar shape and trend,dispersion of Positive data is more significant than Negative in some genes.
+
+
+## Step 1: analysis on Positive data
+## Figure Explore.2
+###  First,use the plot,eg. Barplot,Violin...,we can explore some message from sample
+
+
+```{r}
+Group_Bar(Positive.pbmc@raw.data,group =Positive.sample.group)
+Group_Bar(Positive.pbmc@raw.data,group = Positive.sample.cellsize)
+
+VlnPlot(Positive.pbmc,features.plot = important.genes[important.genes%in%rownames(Positive.pbmc@raw.data)],y.lab.rot = 90)  # Violinn plot of gene ITGB in all sample
+```
+
+
+##  Dimensionality reduction
+###  **PCA** and **tSNE**
+    Here,do the dimensionality reduction using the PCA, tSNE method 
+
+*It will take a long time to caculate significant pcs.So,here we use the default value*
+```{r}
+Positive.pbmc<-PCA.TSNE(object = Positive.pbmc,pcs.compute =FALSE,num.pcs = 28)
+```
+
+
+### After the PCA and tSNE,try plot: Featureplot of **ITGB4**,four var.genes,PCA plot,tSNE plot...
+```{r}
+FeaturePlot(object = Positive.pbmc,features.plot=
+              important.genes[important.genes%in%rownames(Positive.pbmc@raw.data)],
+            pt.size = 1,no.legend = FALSE,
+            reduction.use = 'pca')  # ITGB4 gene in part dataset
+
+FeaturePlot(object = Positive.pbmc,features.plot=
+              important.genes[important.genes%in%rownames(Positive.pbmc@raw.data)],
+            pt.size = 1,no.legend = FALSE,
+            reduction.use = 'tsne')  # ITGB4 gene in part dataset
+
+DimPlot(Positive.pbmc,reduction.use = 'tsne',pt.size = 4)  #  grour by sample
+DimPlot(Positive.pbmc,reduction.use = 'pca',pt.size = 4)  #  grour by sample
+DimHeatmap(Positive.pbmc,reduction.type = 'pca',check.plot = FALSE)
+
+```
+
+
+The Faetureplot of `r important.genes `based on **PCA** shows that,they only has high expression level in few samples,and expresss lowly in most sample.It means that may be these important genes express differently across sample.The plot also tell us the gene **KRT5,GAPDH,PAXX6,KRT14** have more higher expression level than the other important genes.It is consistent with the result of violin plot.
+   About the heatmap,we only  show the gene **ITGB4** And the FeatureHeatmap and Heamap also comfirm this phenomeno.We try the other four variable genes,which has the similar result as gene *ITGB4*
+   But the *tSNE* and * PCA * plot show that, the sample can not be split apparently.The result may be is not good based on the PCA and tSNE method.
+   
+##  Differential expression
+    Next,we will have analysis on gene differential expression.Find maker genes across sample.We use the method: **wilcox test**
+```{r}
+#  Finds markers (differentially expressed genes) for each of the identity classes in a dataset
+Positive.markers<-FindAllMarkers(Positive.pbmc,test.use = 'bimod',print.bar = FALSE)
+head(Positive.markers)
+```
+We check whether the important genes are still in the marker genes we found from the DESeq analysis.
+the genes:`r important.genes[important.genes%in%Positive.markers$gene]` are still in the marker genes.  
+
+
+### Bar plot of gene's p.val
+```{r,echo=FALSE}
+genes.positive.dp<-Positive.markers[,'p_val_adj',drop=FALSE]
+colnames(genes.positive.dp)<-'p_val'
+Positive.p.genes<-DESeq_Genes(p.data = genes.positive.dp)
+```
+
+
+```{r}
+Positive.heatmap<-Heatmap_fun(genes                     =important.genes[important.genes%in%rownames(Positive.pbmc@raw.data)],
+                           tpm.data = Positive.pbmc@scale.data,
+                           condition = unique(as.character(Positive.pbmc@ident)),
+                           all.condition = as.character(Positive.pbmc@ident))
+
+NMF::aheatmap(Positive.heatmap[[2]], Rowv = NA, Colv = NA, annCol =Positive.heatmap[[1]], 
+              scale = "none")
+
+```
+We have find all marker genes across sample,there are `r length(which(Positive.markers$p_val_adj<0.05))` significant genes(adjust p-value <0.05) in all marker genes.
+  
+###  Next,Spectral k-means clustering on single cells based on PCA
+```{r}
+Positive.pbmc<-KClustDimension(Positive.pbmc,reduction.use = 'pca',k.use = 3)
+clusters.pca<-Positive.pbmc@meta.data$kdimension.ident
+DimPlot(Positive.pbmc,pt.size = 4,group.by ='kdimension.ident')
+```
+
+### Spectral k-means clustering on single cells based on tSNE
+```{r}
+Positive.pbmc<-KClustDimension(Positive.pbmc,reduction.use = 'tsne',k.use = 3)
+clusters.tsne<-Positive.pbmc@meta.data$kdimension.ident
+DimPlot(Positive.pbmc,pt.size = 4,group.by ='kdimension.ident',reduction.use = 'tsne')
+```
+
+
+
+
+
+## Step 2: analysis on Negative data
+## Figure Explore
+###  First,use the plot,eg. Barplot,Violin...,we can explore some message from sample
+
+
+```{r}
+Group_Bar(Negative.pbmc@raw.data,group =Negative.sample.group)
+Group_Bar(Negative.pbmc@raw.data,group = Negative.sample.cellsize)
+
+VlnPlot(Negative.pbmc,features.plot = important.genes[important.genes%in%rownames(Negative.pbmc@raw.data)],y.lab.rot = 90)  # Violinn plot of gene ITGB in all sample
+```
+
+
+##  Dimensionality reduction
+###  **PCA** and **tSNE**
+    Here,do the dimensionality reduction using the PCA, tSNE method 
+
+*It will take a long time to caculate significant pcs.So,here we use the default value*
+```{r}
+Negative.pbmc<-PCA.TSNE(object = Negative.pbmc,pcs.compute =FALSE,num.pcs = 28)
+```
+
+
+### After the PCA and tSNE,try plot: Featureplot of **ITGB4**,four var.genes,PCA plot,tSNE plot...
+```{r}
+FeaturePlot(object = Negative.pbmc,features.plot=
+              important.genes[important.genes%in%rownames(Negative.pbmc@raw.data)],
+            pt.size = 1,no.legend = FALSE,
+            reduction.use = 'pca')  # ITGB4 gene in part dataset
+
+FeaturePlot(object = Negative.pbmc,features.plot=
+              important.genes[important.genes%in%rownames(Negative.pbmc@raw.data)],
+            pt.size = 1,no.legend = FALSE,
+            reduction.use = 'tsne')  # ITGB4 gene in part dataset
+
+DimPlot(Negative.pbmc,reduction.use = 'tsne',pt.size = 4)  #  grour by sample
+DimPlot(Negative.pbmc,reduction.use = 'pca',pt.size = 4)  #  grour by sample
+DimHeatmap(Negative.pbmc,reduction.type = 'pca',check.plot = FALSE)
+
+```
+
+
+The Faetureplot of `r important.genes `based on **PCA** shows that,they only has high expression level in few samples,and expresss lowly in most sample.It means that may be these important genes express differently across sample.The plot also tell us the gene **KRT5,GAPDH,PAXX6,KRT14** have more higher expression level than the other important genes.It is consistent with the result of violin plot.
+   About the heatmap,we only  show the gene **ITGB4** And the FeatureHeatmap and Heamap also comfirm this phenomeno.We try the other four variable genes,which has the similar result as gene *ITGB4*
+   But the *tSNE* and * PCA * plot show that, the sample can not be split apparently.The result may be is not good based on the PCA and tSNE method.
+   
+##  Differential expression
+    Next,we will have analysis on gene differential expression.Find maker genes across sample.We use the method: **wilcox test**
+```{r}
+#  Finds markers (differentially expressed genes) for each of the identity classes in a dataset
+Negative.markers<-FindAllMarkers(Negative.pbmc,test.use = 'bimod',print.bar = FALSE)
+head(Negative.markers)
+```
+We check whether the important genes are still in the marker genes we found from the DESeq analysis.
+the genes:`r important.genes[important.genes%in%Negative.markers$gene]` are still in the marker genes.  
+
+
+### Bar plot of gene's p.val
+```{r,echo=FALSE}
+genes.Negative.dp<-Negative.markers[,'p_val_adj',drop=FALSE]
+colnames(genes.Negative.dp)<-'p_val'
+Negative.p.genes<-DESeq_Genes(p.data = genes.Negative.dp)
+```
+
+
+```{r}
+Negative.heatmap<-Heatmap_fun(genes                     =important.genes[important.genes%in%rownames(Negative.pbmc@raw.data)],
+                           tpm.data = Negative.pbmc@scale.data,
+                           condition = unique(as.character(Negative.pbmc@ident)),
+                           all.condition = as.character(Negative.pbmc@ident))
+
+NMF::aheatmap(Negative.heatmap[[2]], Rowv = NA, Colv = NA, annCol =Negative.heatmap[[1]], 
+              scale = "none")
+
+```
+We have find all marker genes across sample,there are `r length(which(Negative.markers$p_val_adj<0.05))` significant genes(adjust p-value <0.05) in all marker genes.
+  
+###  Next,Spectral k-means clustering on single cells based on PCA
+```{r}
+Negative.pbmc<-KClustDimension(Negative.pbmc,reduction.use = 'pca',k.use = 3)
+clusters.pca<-Negative.pbmc@meta.data$kdimension.ident
+DimPlot(Negative.pbmc,pt.size = 4,group.by ='kdimension.ident')
+```
+
+### Spectral k-means clustering on single cells based on tSNE
+```{r}
+Negative.pbmc<-KClustDimension(Negative.pbmc,reduction.use = 'tsne',k.use = 3)
+clusters.tsne<-Negative.pbmc@meta.data$kdimension.ident
+DimPlot(Negative.pbmc,pt.size = 4,group.by ='kdimension.ident',reduction.use = 'tsne')
+```
+
+
+
+
+## Differential expression  use DESeq2 packages
+
+When use the DESeq,it must require the gene count matrix satisify that: **every gene contains at least one zero, cannot compute log geometric means**. So have to take another method to handle data,but I do not know whether it is  reasonable.Just  try!!!
+
+###  Positive
+```{r}
+condition.p<-unlist(lapply(Positive.pbmc@cell.names,function(x)return(str_split(x,'_')[[1]][2])))
+Positive.xdds<-DESeq_CT(count.data = Positive.pbmc@raw.data,condition.1 = condition.p)
+plotDispEsts(Positive.xdds,main='Per-gene Dispersion')
+```
+
+## Do the DESeq test across all cells with sample group.And get all the  significant genes between two groups(p.value < 0.05)
+```{r}
+Positive.DESeqGenes<-DESeq_result(Positive.xdds,condition = condition.p)
+```
+
+
+```{r}
+Positive.DESeqGenes.v<-as.vector(Positive.DESeqGenes)
+library(VennDiagram)
+grid.draw(venn.diagram(Positive.DESeqGenes.v[1:3],filename = NULL,
+                       fill= c("dodgerblue", "goldenrod1", "darkorange1")))
+```
+
+
+
+### Negative
+```{r}
+condition.n<-unlist(lapply(Negative.pbmc@cell.names,function(x)return(str_split(x,'_')[[1]][2])))
+Negative.xdds<-DESeq_CT(count.data = Negative.pbmc@raw.data,condition.1 = condition.n)
+plotDispEsts(Negative.xdds,main='Per-gene Dispersion')
+```
+
+## Do the DESeq test across all cells with sample group.And get all the  significant genes between two groups(p.value < 0.05)
+```{r}
+Negative.DESeqGenes<-DESeq_result(Negative.xdds,condition = condition.n)
+```
+
+
+```{r}
+Negative.DESeqGenes.v<-as.vector(Negative.DESeqGenes)
+library(VennDiagram)
+grid.draw(venn.diagram(Negative.DESeqGenes.v[1:3],filename = NULL,
+                       fill= c("dodgerblue", "goldenrod1", "darkorange1")))
+```

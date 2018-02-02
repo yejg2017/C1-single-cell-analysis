@@ -1,0 +1,270 @@
+---
+title: "Human analysis on cell size"
+author: "yejg"
+date: "2018/1/29"
+output:
+  word_document: default
+  html_document: default
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,message = FALSE,warning = FALSE,tidy = TRUE,fig.width=12, fig.height=10,highlight = TRUE)
+```
+
+### Load the packages
+```{r}
+library(Seurat)
+library(data.table)
+library(NMF)
+library(rsvd)
+library(Rtsne)
+library(ggplot2)
+library(cowplot)
+library(sva)
+library(igraph)
+library(cccd)
+library(KernSmooth)
+library(beeswarm)
+library(stringr)
+library(formatR)
+source('../tools.R')
+library(DESeq2)
+```
+
+###  The function will be used in the follow
+```{r,echo=FALSE}
+#  read data function
+Load_data<-function(data_dir,condition.sample_dir=NULL){
+  dat<-read.table(data_dir)
+  
+  if(!is.null(condition.sample_dir)){
+    condition.sample.data<-read.table(condition.sample_dir)
+    condition.sample<-as.character(condition.sample.data[,'sample'])
+    condition<-as.character(condition.sample.data[,'condition'])
+    
+    return(list(data.frame(dat[,condition.sample]),condition))
+  }else{
+    return(dat)
+  }
+}
+
+#  Create sub Seurate object
+Sub_Seurat<-function(object,ident.1,ident.2){
+  #  ident.1:  the first ident selected in the object
+  #  ident.2:  the second ident selected  in the object
+  cells1<-WhichCells(object=object,ident = ident.1)
+  cells2<-WhichCells(object=object,ident = ident.2)
+  
+  cells<-c(cells1,cells2)
+  Sub.ident<-object@ident[object@cell.names%in%cells]
+  Subobj<-SubsetData(object = object,cells.use = cells,ident.use = Sub.ident)
+  
+  return(Subobj)
+}
+
+#  Return the genes after DESqe analysis
+# DESeq_Genes<-function(p.data,p.val=0.05,num.genes=20,Order=TRUE,bar=TRUE){
+#   #  p.data: the data from DESeq analysis:genes,p.val
+#   #  p.val :the p.val cutoff
+#   #  Order: Wheter return the genes after p.val rank
+#   
+#   p.genes<-data.frame(na.omit(p.data))
+#   
+#   if(Order){
+#     p.genes<-p.genes[order(p.genes$p_val),,drop=FALSE]
+#   }
+#   
+#   genes<-rownames(p.genes)[which(p.genes$p_val<p.val)]
+#   p.genes<-p.genes[genes,,drop=FALSE]
+#   p.genes$gene<-genes
+#   
+#   if(bar){
+#     print(ggplot(data = p.genes[1:num.genes,,drop=FALSE])+xlab('gene')+
+#             geom_bar(aes(x=reorder(gene,-p_val),y=p_val,fill=gene),stat = 'identity')+
+#             theme(axis.text.x = element_text(face="bold",size=10,hjust = 1,angle = 90),
+#                   legend.position = 'none'))
+#   }
+#   return(genes)
+# }
+
+
+###  Barplot
+Group_Bar<-function(count.data,group,Gv.return=FALSE){
+  
+  if(dim(count.data)[2]!=length(group)){
+    stop('Invalid count data')
+  }
+  nGroups<-length(unique(group))
+  nGene<-dim(count.data)[1]
+  uniq.group<-unique(group)
+  
+  Group.per.gene.cov<-lapply(uniq.group,function(x){
+    counts<-rowSums(count.data[,group%in%x,drop=FALSE])/nGene
+    counts<-data.frame(counts)
+    colnames(counts)<-x
+    return(counts)
+  })
+  
+  Groups.converage<-as.data.frame(Group.per.gene.cov)
+  barplot(as.matrix(Groups.converage),beside = TRUE,ylab="Counts per gene")
+  
+  if(Gv.return){
+    return(Groups.converage)
+  }
+}
+```
+
+
+##  Analysis based on cell size
+According to the previous analysis on sample group,remove the group **hc001** and cell size **2um**
+###  Read data
+###  Data QA
+```{r}
+human.only.pro<-Load_data(data_dir = '../data/human.txt')
+important.genes<-c('ITGB4','ABCB5','KRT19','ACTB','KRT12','KRT5',
+                   'GAPDH','KRT3','PAX6','WNT7A','KRT14','TP63','KRT10')
+human.only.pro<-human.only.pro[,colnames(human.only.pro)[unlist(lapply(colnames(human.only.pro),
+                    function(x)return(str_split(x,'_')[[1]][2])))%in%c('10um','20um','6um')]]
+human.only.pro<-human.only.pro[,colnames(human.only.pro)[!unlist(lapply(colnames(human.only.pro),
+                             function(x)return(str_split(x,'_')[[1]][1])))%in%c('hc001','shoutiao')]]
+#human.only.pro<-Simplify_Select(human.only.pro)
+```
+
+###  Create Seurat object and not caculate DESeq,but not set **min.cells** and **min.genes** 
+```{r}
+# only select the cells contain 10 genes expressed at least,select the genes must be expressed in two cells at least
+human.all.DESeq<-DESeq_SeuratObj(X=human.only.pro,DESq = FALSE,min.cells = 10,min.genes = 2)
+all.sample.group<-unlist(lapply(human.all.DESeq@cell.names,function(x)return(str_split(x,'_')[[1]][1])))
+all.sample.size<-unlist(lapply(human.all.DESeq@cell.names,function(x)return(str_split(x,'_')[[1]][2])))
+#  reset ident
+human.all.DESeq<-SetIdent(human.all.DESeq,cells.use = human.all.DESeq@cell.names,ident.use = all.sample.size)
+```
+## Figure Explore
+###  First,use the plot,eg. Barplot,Violin...,we can explore some message from sample
+```{r}
+#human.Lognorm<-data.frame(as.matrix(LogNormalize(human.only.pro,display.progress = FALSE)))
+#human.imp.lognorm<-data.frame(t(human.Lognorm[important.genes,]))
+human.imp.lognorm<-data.frame(FetchData(human.all.DESeq,vars.all = important.genes[important.genes%in%rownames(human.all.DESeq@raw.data)]))
+human.imp.lognorm$cell.size<-unlist(lapply(rownames(human.imp.lognorm),function(x)return(str_split(x,'_')[[1]][2])))
+human.imp.lognorm.melt<-melt(human.imp.lognorm)
+```
+### Figure Explore.1
+#### Violin
+```{r,eval=FALSE}
+p<-ggplot(data = human.imp.lognorm.melt,aes(y=value,x=cell.size,fill=cell.size))
+p+geom_violin(trim = FALSE,scale = "width")+facet_wrap(~variable)+
+  geom_jitter()+guides(fill=guide_legend(title="Cell Size"))
+
+```
+#### Boxplot
+```{r}
+p<-ggplot(data = human.imp.lognorm.melt,aes(y=value,x=cell.size,fill=cell.size))
+p+geom_boxplot()+guides(fill=guide_legend(title="Cell Size"))+facet_wrap(~variable)
+```
+
+#### Density,histogram
+```{r}
+ggplot(data = human.imp.lognorm.melt,aes(x=value,fill=variable))+
+  geom_density(kernel='gaussian')+scale_x_sqrt()+
+  facet_wrap(~cell.size)
+
+
+ggplot(data = human.imp.lognorm.melt,aes(x=value,fill=variable))+
+  geom_density(kernel='gaussian',position = 'stack')+scale_x_sqrt()+facet_wrap(~cell.size)
+
+
+ggplot(data = human.imp.lognorm.melt,aes(x=value,fill=variable))+
+   geom_histogram()+scale_x_sqrt()+facet_wrap(~cell.size)
+
+```
+
+
+
+```{r}
+Group_Bar(human.all.DESeq@raw.data,group = all.sample.group)
+Group_Bar(human.all.DESeq@raw.data,group = all.sample.size)
+
+# We are interested in the gene ITGB4 
+GenePlot(human.all.DESeq,gene1 = 'ITGB4',gene2 =important.genes[2])
+#VlnPlot(human.all.DESeq,features.plot = 'ITGB4',y.lab.rot = 90)  # Violinn plot of gene ITGB in all sample
+VlnPlot(human.all.DESeq,features.plot = important.genes[important.genes%in%rownames(human.all.DESeq@raw.data)],y.lab.rot = 90)  # Violinn plot of gene ITGB in all sample
+```
+ 
+
+##  Dimensionality reduction
+###  **PCA** and **tSNE**
+    Here,do the dimensionality reduction using the PCA, tSNE method 
+```{r}
+all.pbmc<-PCA.TSNE(object = human.all.DESeq,pcs.compute =FALSE,num.pcs = 28)
+```
+
+
+### After the PCA and tSNE,try plot: Featureplot of **ITGB4**,four var.genes,PCA plot,tSNE plot...
+```{r}
+# FeaturePlot(object = all.pbmc,features.plot ='ITGB4',pt.size = 4,no.legend = FALSE)  # ITGB4 gene in part dataset
+FeaturePlot(object = all.pbmc,features.plot=
+              important.genes[important.genes%in%rownames(human.all.DESeq@raw.data)],
+            pt.size = 1,no.legend = FALSE,
+            reduction.use = 'pca')  # ITGB4 gene in part dataset
+
+
+DimPlot(all.pbmc,reduction.use = 'tsne',pt.size = 4)  #  grour by sample
+DimPlot(all.pbmc,reduction.use = 'pca',pt.size = 4)  #  grour by sample
+DimHeatmap(all.pbmc,reduction.type = 'pca',check.plot = FALSE)
+
+
+FeatureHeatmap(all.pbmc,features.plot = 'ITGB4',pt.size = 3,plot.horiz = TRUE,
+               cols.use = c("lightgrey", "blue"))
+```
+   The Faetureplot of `r important.genes `based on **PCA** shows that,they only has high expression level in few samples,and expresss lowly in most sample.It means that may be these important genes express differently across sample.The plot also tell us the gene **KRT5,GAPDH,PAXX6,KRT14** have more higher expression level than the other important genes.It is consistent with the result of violin plot.
+   About the heatmap,we only  show the gene **ITGB4** And the FeatureHeatmap and Heamap also comfirm this phenomeno.We try the other four variable genes,which has the similar result as gene *ITGB4*
+   But the *tSNE* and * PCA * plot show that, the sample can not be split apparently.The result may be is not good based on the PCA and tSNE method.
+   
+
+##  Differential expression
+    Next,we will have analysis on gene differential expression.Find maker genes across sample.We use the method: **wilcox test**
+```{r}
+#  Finds markers (differentially expressed genes) for each of the identity classes in a dataset
+all_markers<-FindAllMarkers(all.pbmc,test.use = 'bimod',print.bar = FALSE)
+head(all_markers)
+```
+We check whether the important genes are still in the marker genes we found from the DESeq analysis.
+the genes:`r important.genes[important.genes%in%all_markers$gene]` are still in the marker genes.  
+
+
+### Bar plot of gene's p.val
+```{r,echo=FALSE}
+genes.all.dp<-all_markers[,'p_val_adj',drop=FALSE]
+colnames(genes.all.dp)<-'p_val'
+human.p.genes<-DESeq_Genes(p.data = genes.all.dp)
+```
+
+
+```{r}
+human.heatmap<-Heatmap_fun(genes                     =important.genes[important.genes%in%rownames(human.all.DESeq@raw.data)],
+                           tpm.data = all.pbmc@scale.data,
+                           condition = unique(as.character(all.pbmc@ident)),
+                           all.condition = as.character(all.pbmc@ident))
+
+NMF::aheatmap(human.heatmap[[2]], Rowv = NA, Colv = NA, annCol = human.heatmap[[1]], 
+              scale = "none")
+
+```
+
+
+ We have find all marker genes across sample,there are `r length(which(all_markers$p_val_adj<0.05))` significant genes(adjust p-value <0.05) in all marker genes.
+  
+###  Next,Spectral k-means clustering on single cells based on PCA
+```{r}
+all.pbmc<-KClustDimension(all.pbmc,reduction.use = 'pca',k.use = 3)
+clusters.pca<-all.pbmc@meta.data$kdimension.ident
+DimPlot(all.pbmc,pt.size = 4,group.by ='kdimension.ident')
+```
+
+### Spectral k-means clustering on single cells based on tSNE
+```{r}
+all.pbmc<-KClustDimension(all.pbmc,reduction.use = 'tsne',k.use = 3)
+clusters.tsne<-all.pbmc@meta.data$kdimension.ident
+DimPlot(all.pbmc,pt.size = 4,group.by ='kdimension.ident',reduction.use = 'tsne')
+```

@@ -1,0 +1,185 @@
+---
+title: "Monkey summary analysis"
+author: "yejg"
+date: "2018/1/26"
+output:
+  word_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,message = FALSE,warning = FALSE,tidy = TRUE,fig.width=12, fig.height=10,highlight = TRUE)
+```
+
+### Load the packages
+```{r}
+library(Seurat)
+library(data.table)
+library(NMF)
+library(rsvd)
+library(Rtsne)
+library(ggplot2)
+library(cowplot)
+library(sva)
+library(igraph)
+library(cccd)
+library(KernSmooth)
+library(beeswarm)
+library(stringr)
+library(formatR)
+source('../tools.R')
+library(DESeq2)
+```
+
+## Step 1: All data: Analysis based on sample group
+###  Read data
+###  Data QA
+```{r}
+monkey.only.pro<-Load_data(data_dir = '../data/monkey.txt')
+important.genes<-c('ITGB4','ABCB5','KRT19','ACTB','KRT12','KRT5',
+                   'GAPDH','KRT3','PAX6','WNT7A','KRT14','TP63','KRT10')
+
+table(unlist(lapply(colnames(monkey.only.pro),
+                    function(x)return(str_split(x,'_')[[1]][2]))))
+table(unlist(lapply(colnames(monkey.only.pro),
+                    function(x)return(str_split(x,'_')[[1]][1]))))
+```
+###  Create Seurat object and not caculate DESeq,but set **min.cells=10** and **min.genes=2** 
+```{r}
+# only select the cells contain 10 genes expressed at least,select the genes must be expressed in two cells at least
+monkey.all.pbmc<-DESeq_SeuratObj(X=monkey.only.pro,DESq = FALSE,min.cells = 10,min.genes = 2)
+all.sample.group<-unlist(lapply(monkey.all.pbmc@cell.names,function(x)return(str_split(x,'_')[[1]][1])))
+all.sample.size<-unlist(lapply(monkey.all.pbmc@cell.names,function(x)return(str_split(x,'_')[[1]][2])))
+```
+## Figure Explore
+###  First,use the plot,eg. Barplot,density...,we can explore some message from sample
+
+```{r}
+monkey.imp.lognorm<-data.frame(FetchData(monkey.all.pbmc,vars.all = important.genes[important.genes%in%rownames(monkey.all.pbmc@raw.data)]))
+monkey.imp.lognorm$cell.size<-unlist(lapply(rownames(monkey.imp.lognorm),function(x)return(str_split(x,'_')[[1]][2])))
+monkey.imp.lognorm$cell.sample<-unlist(lapply(rownames(monkey.imp.lognorm),function(x)return(str_split(x,'_')[[1]][1])))
+monkey.imp.lognorm.melt<-melt(monkey.imp.lognorm)
+```
+
+#### Boxplot
+```{r}
+p<-ggplot(data = monkey.imp.lognorm.melt,aes(y=value,x=cell.sample,fill=cell.sample))
+p+geom_boxplot()+guides(fill=guide_legend(title="Cell Sample"))+facet_wrap(~variable)
+```
+
+#### Density,histogram
+```{r}
+ggplot(data = monkey.imp.lognorm.melt,aes(x=value,fill=variable))+
+  geom_density(kernel='gaussian')+scale_x_sqrt()+
+  facet_wrap(~cell.sample)
+
+
+ggplot(data = monkey.imp.lognorm.melt,aes(x=value,fill=variable))+
+  geom_density(kernel='gaussian',position = 'stack')+scale_x_sqrt()+facet_wrap(~cell.sample)
+
+ggplot(data = monkey.imp.lognorm.melt,aes(x=value,fill=variable))+
+   geom_histogram()+scale_x_sqrt()+facet_wrap(~cell.sample)
+
+```
+
+
+```{r}
+Group_Bar(monkey.all.pbmc@raw.data,group = all.sample.group)
+Group_Bar(monkey.all.pbmc@raw.data,group = all.sample.size)
+
+# We are interested in the gene ITGB4 
+GenePlot(monkey.all.pbmc,gene1 = 'ITGB4',gene2 =important.genes[3])
+
+VlnPlot(monkey.all.pbmc,features.plot = important.genes[important.genes%in%rownames(monkey.all.pbmc@raw.data)],y.lab.rot = 90)  # Violinn plot of gene ITGB in all sample
+```
+##  Dimensionality reduction
+###  **PCA** and **tSNE**
+    Here,do the dimensionality reduction using the PCA, tSNE method 
+```{r}
+all.pbmc<-PCA.TSNE(object = monkey.all.pbmc,pcs.compute =FALSE,num.pcs = 28)
+```
+
+
+
+### After the PCA and tSNE,try plot: Featureplot of **ITGB4**,four var.genes,PCA plot,tSNE plot...
+```{r}
+# FeaturePlot(object = all.pbmc,features.plot ='ITGB4',pt.size = 4,no.legend = FALSE)  # ITGB4 gene in part dataset
+FeaturePlot(object = all.pbmc,features.plot=
+              important.genes[important.genes%in%rownames(all.pbmc@raw.data)],
+            pt.size = 1,no.legend = FALSE,
+            reduction.use = 'pca')  
+
+FeaturePlot(object = all.pbmc,features.plot=
+              important.genes[important.genes%in%rownames(all.pbmc@raw.data)],
+            pt.size = 1,no.legend = FALSE,
+            reduction.use = 'tsne') 
+
+DimPlot(all.pbmc,reduction.use = 'tsne',pt.size = 4)  #  grour by sample
+DimPlot(all.pbmc,reduction.use = 'pca',pt.size = 4)  #  grour by sample
+DimHeatmap(all.pbmc,reduction.type = 'pca',check.plot = FALSE)
+
+
+FeatureHeatmap(all.pbmc,features.plot = 'ITGB4',pt.size = 3,plot.horiz = TRUE,
+               cols.use = c("lightgrey", "blue"))
+```
+
+
+### Heatmap for important genes
+```{r}
+monkey.heatmap<-Heatmap_fun(genes                     =important.genes[important.genes%in%rownames(all.pbmc@raw.data)],
+                           tpm.data = all.pbmc@scale.data,
+                           condition = unique(as.character(all.pbmc@ident)),
+                           all.condition = as.character(all.pbmc@ident))
+
+NMF::aheatmap(monkey.heatmap[[2]], Rowv = NA, Colv = NA, annCol = monkey.heatmap[[1]], 
+              scale = "none")
+
+```
+
+The heatmap of genes `r important.genes[important.genes%in%rownames(all.pbmc@raw.data)]` .It tells us that **KRT14,WN&7A,ITGB4** expressed differently across sample,expressed more significant.
+
+
+###  Next,Spectral k-means clustering on single cells based on PCA
+```{r}
+all.pbmc<-KClustDimension(all.pbmc,reduction.use = 'pca',k.use =length(unique(all.sample.group)))
+clusters.pca<-all.pbmc@meta.data$kdimension.ident
+DimPlot(all.pbmc,pt.size = 4,group.by ='kdimension.ident')
+```
+
+### Spectral k-means clustering on single cells based on tSNE
+```{r}
+all.pbmc<-KClustDimension(all.pbmc,reduction.use = 'tsne',k.use =length(unique(all.sample.group)))
+clusters.tsne<-all.pbmc@meta.data$kdimension.ident
+DimPlot(all.pbmc,pt.size = 4,group.by ='kdimension.ident',reduction.use = 'tsne')
+```
+
+
+##  Differential expression
+    Next,we will have analysis on gene differential expression.Find maker genes across sample.We use the method: **wilcox test**
+```{r}
+#  Finds markers (differentially expressed genes) for each of the identity classes in a dataset
+monkey.markers<-FindAllMarkers(all.pbmc,test.use = 'bimod',print.bar = FALSE)
+head(monkey.markers)
+```
+
+We check whether the important genes are still in the marker genes we found from the DESeq analysis.
+the genes:`r important.genes[important.genes%in%monkey.markers$gene]` are still in the marker genes.  
+
+
+### Bar plot of gene's p.val
+```{r,echo=FALSE}
+genes.monkey.dp<-monkey.markers[,'p_val_adj',drop=FALSE]
+colnames(genes.monkey.dp)<-'p_val'
+monkey.p.genes<-DESeq_Genes(p.data = genes.monkey.dp)
+```
+
+
+### Anova analsis:test the important genes'mean between cell size,cell groups ,whether is equal
+
+#### anavo analysis
+```{r}
+for(gene in unique(monkey.imp.lognorm.melt$variable)){
+  aov.gene<-Anova.gene(data = monkey.imp.lognorm.melt,gene = gene,inter = FALSE,plot.aov = FALSE)
+}
+```
+

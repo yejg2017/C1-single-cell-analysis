@@ -1,0 +1,178 @@
+---
+title: "Mouse analysis v1"
+author: "yejg"
+date: "2018/1/26"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,message = FALSE,warning = FALSE,tidy = TRUE,fig.width=12, fig.height=10,highlight = TRUE)
+```
+
+### Load the packages
+```{r}
+library(Seurat)
+library(data.table)
+library(NMF)
+library(rsvd)
+library(Rtsne)
+library(ggplot2)
+library(cowplot)
+library(sva)
+library(igraph)
+library(cccd)
+library(KernSmooth)
+library(beeswarm)
+library(stringr)
+library(formatR)
+source('../tools.R')
+library(DESeq2)
+```
+
+## Step 1: All data: Analysis based on sample group
+###  Read data
+###  Data QA
+```{r}
+mouse.only.pro<-Load_data(data_dir = '../data/mouse.txt')
+rownames(mouse.only.pro)<-unlist(lapply(rownames(mouse.only.pro),str_to_upper))
+important.genes<-c('ITGB4','ABCB5','KRT19','ACTB','KRT12','KRT5',
+                   'GAPDH','KRT3','PAX6','WNT7A','KRT14','TRP63','KRT10')
+
+table(unlist(lapply(colnames(mouse.only.pro),
+                    function(x)return(str_split(x,'_')[[1]][2]))))
+table(unlist(lapply(colnames(mouse.only.pro),
+                    function(x)return(str_split(x,'_')[[1]][1]))))
+```
+
+
+###  Create Seurat object and not caculate DESeq,but set **min.cells=10** and **min.genes=2** 
+```{r}
+# only select the cells contain 10 genes expressed at least,select the genes must be expressed in two cells at least
+mouse.all.pbmc<-DESeq_SeuratObj(X=mouse.only.pro,DESq = FALSE,min.cells = 10,min.genes = 2)
+all.sample.group<-unlist(lapply(mouse.all.pbmc@cell.names,function(x)return(str_split(x,'_')[[1]][1])))
+all.sample.size<-unlist(lapply(mouse.all.pbmc@cell.names,function(x)return(str_split(x,'_')[[1]][2])))
+#  reset ident
+# mouse.all.DESeq<-SetIdent(mouse.all.DESeq,cells.use = mouse.all.DESeq@cell.names,ident.use = all.sample.size)
+```
+
+
+
+## Figure Explore
+###  First,use the plot,eg. Barplot,Violin...,we can explore some message from sample
+
+
+```{r}
+Group_Bar(mouse.all.pbmc@raw.data,group = all.sample.group)
+Group_Bar(mouse.all.pbmc@raw.data,group = all.sample.size)
+
+# We are interested in the gene ITGB4 
+GenePlot(mouse.all.pbmc,gene1 = 'ITGB4',gene2 =important.genes[3])
+#VlnPlot(mouse.all.pbmc,features.plot = 'ITGB4',y.lab.rot = 90)  # Violinn plot of gene ITGB in all sample
+VlnPlot(mouse.all.pbmc,features.plot = important.genes[important.genes%in%rownames(mouse.all.pbmc@raw.data)],y.lab.rot = 90)  # Violinn plot of gene ITGB in all sample
+```
+  After create seurat object`r important.genes[important.genes%in%rownames(mouse.all.pbmc@raw.data)]` are still in the sample data.Seurat object will remove low expression genes because set min.cells and min.genes.According to the plot above,they tell us that genes have higher expression in **mc002,mc007,mc001** if group by sample name identity;have higher expression in **20um** if group by cell size.And the gene **GAPDH,KRT10** have lower expression across sample,compared to other genes detected.
+  
+  
+##  Dimensionality reduction
+###  **PCA** and **tSNE**
+    Here,do the dimensionality reduction using the PCA, tSNE method 
+```{r}
+all.pbmc<-PCA.TSNE(object = mouse.all.pbmc,pcs.compute =FALSE,num.pcs = 28)
+```
+
+
+### After the PCA and tSNE,try plot: Featureplot of **ITGB4**,four var.genes,PCA plot,tSNE plot...
+```{r}
+# FeaturePlot(object = all.pbmc,features.plot ='ITGB4',pt.size = 4,no.legend = FALSE)  # ITGB4 gene in part dataset
+FeaturePlot(object = all.pbmc,features.plot=
+              important.genes[important.genes%in%rownames(all.pbmc@raw.data)],
+            pt.size = 1,no.legend = FALSE,
+            reduction.use = 'pca')  
+
+FeaturePlot(object = all.pbmc,features.plot=
+              important.genes[important.genes%in%rownames(all.pbmc@raw.data)],
+            pt.size = 1,no.legend = FALSE,
+            reduction.use = 'tsne') 
+
+DimPlot(all.pbmc,reduction.use = 'tsne',pt.size = 4)  #  grour by sample
+DimPlot(all.pbmc,reduction.use = 'pca',pt.size = 4)  #  grour by sample
+DimHeatmap(all.pbmc,reduction.type = 'pca',check.plot = FALSE)
+
+
+FeatureHeatmap(all.pbmc,features.plot = 'ITGB4',pt.size = 3,plot.horiz = TRUE,
+               cols.use = c("lightgrey", "blue"))
+```
+The Faetureplot of `r important.genes[important.genes%in%rownames(all.pbmc@raw.data)]`based on **PCA,TSNE** shows that,they only has high expression level in few samples,and expresss lowly in most sample.It means that may be these important genes express differently across sample.The plot also tell us the gene **ACTB,KRT12,KRT5,KRT14** have more higher expression level than the other important genes.It is consistent with the result of violin plot.
+   About the heatmap,we only  show the gene **ITGB4** And the FeatureHeatmap and Heamap also comfirm this phenomeno.We try the other four variable genes,which has the similar result as gene *ITGB4*
+   But the *tSNE* and * PCA * plot show that, the sample can not be split apparently.The result may be is not good based on the PCA and tSNE method.
+   
+
+```{r}
+mouse.heatmap<-Heatmap_fun(genes                     =important.genes[important.genes%in%rownames(all.pbmc@raw.data)],
+                           tpm.data = all.pbmc@scale.data,
+                           condition = unique(as.character(all.pbmc@ident)),
+                           all.condition = as.character(all.pbmc@ident))
+
+NMF::aheatmap(mouse.heatmap[[2]], Rowv = NA, Colv = NA, annCol = mouse.heatmap[[1]], 
+              scale = "none")
+
+```
+The heatmap of genes `r important.genes[important.genes%in%rownames(all.pbmc@raw.data)]` .It tells us that **KRT10,GAPDH,KRT15** expressed differently across sample,expressed more significant.
+
+
+  
+###  Next,Spectral k-means clustering on single cells based on PCA
+```{r}
+all.pbmc<-KClustDimension(all.pbmc,reduction.use = 'pca',k.use =length(unique(all.sample.group)))
+clusters.pca<-all.pbmc@meta.data$kdimension.ident
+DimPlot(all.pbmc,pt.size = 4,group.by ='kdimension.ident')
+```
+
+### Spectral k-means clustering on single cells based on tSNE
+```{r}
+all.pbmc<-KClustDimension(all.pbmc,reduction.use = 'tsne',k.use =length(unique(all.sample.group)))
+clusters.tsne<-all.pbmc@meta.data$kdimension.ident
+DimPlot(all.pbmc,pt.size = 4,group.by ='kdimension.ident',reduction.use = 'tsne')
+```
+
+##  Differential expression
+    Next,we will have analysis on gene differential expression.Find maker genes across sample.We use the method: **wilcox test**
+```{r}
+#  Finds markers (differentially expressed genes) for each of the identity classes in a dataset
+mouse.markers<-FindAllMarkers(all.pbmc,test.use = 'bimod',print.bar = FALSE)
+head(mouse.markers)
+```
+We check whether the important genes are still in the marker genes we found from the DESeq analysis.
+the genes:`r important.genes[important.genes%in%mouse.markers$gene]` are still in the marker genes.  
+
+
+### Bar plot of gene's p.val
+```{r,echo=FALSE}
+genes.mouse.dp<-mouse.markers[,'p_val_adj',drop=FALSE]
+colnames(genes.mouse.dp)<-'p_val'
+mouse.p.genes<-DESeq_Genes(p.data = genes.mouse.dp)
+```
+
+Differential expression.
+
+When use the DESeq,it must require the gene count matrix satisify that: **every gene contains at least one zero, cannot compute log geometric means**. So have to take another method to handle data,but I do not know whether it is  reasonable.Just  try!!!
+
+```{r}
+condition.1<-unlist(lapply(all.pbmc@cell.names,function(x)return(str_split(x,'_')[[1]][1])))
+mouse.xdds<-DESeq_CT(count.data = all.pbmc@raw.data,condition.1 = condition.1)
+plotDispEsts(mouse.xdds,main='Per-gene Dispersion')
+```
+
+## Do the DESeq test across all cells with sample group.And get all the  significant genes between two groups(p.value < 0.05)
+```{r}
+mouse.genes<-DESeq_result(mouse.xdds,condition = condition.1)
+```
+
+
+```{r}
+mouse.genes<-as.vector(mouse.genes)
+library(VennDiagram)
+grid.draw(venn.diagram(mouse.genes[1:3],filename = NULL,
+                       fill= c("dodgerblue", "goldenrod1", "darkorange1")))
+```
+

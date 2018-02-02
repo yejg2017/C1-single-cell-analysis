@@ -1,0 +1,207 @@
+---
+title: "Human analysis on condition"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,message = FALSE,warning = FALSE,tidy = TRUE,fig.width=12, fig.height=10,highlight = TRUE)
+```
+
+### Load the packages
+```{r}
+library(Seurat)
+library(data.table)
+library(NMF)
+library(rsvd)
+library(Rtsne)
+library(ggplot2)
+library(cowplot)
+library(sva)
+library(igraph)
+library(cccd)
+library(KernSmooth)
+library(beeswarm)
+library(stringr)
+library(formatR)
+source('tools.R')
+library(DESeq2)
+```
+
+###  The function will be used in the follow
+```{r,echo=FALSE}
+#  read data function
+Load_data<-function(data_dir,condition.sample_dir=NULL){
+  dat<-read.table(data_dir)
+  
+  if(!is.null(condition.sample_dir)){
+    condition.sample.data<-read.table(condition.sample_dir)
+    condition.sample<-as.character(condition.sample.data[,'sample'])
+    condition<-as.character(condition.sample.data[,'condition'])
+    
+    return(list(data.frame(dat[,condition.sample]),condition))
+  }else{
+    return(dat)
+  }
+}
+
+#  Create sub Seurate object
+Sub_Seurat<-function(object,ident.1,ident.2){
+  #  ident.1:  the first ident selected in the object
+  #  ident.2:  the second ident selected  in the object
+  cells1<-WhichCells(object=object,ident = ident.1)
+  cells2<-WhichCells(object=object,ident = ident.2)
+  
+  cells<-c(cells1,cells2)
+  Sub.ident<-object@ident[object@cell.names%in%cells]
+  Subobj<-SubsetData(object = object,cells.use = cells,ident.use = Sub.ident)
+  
+  return(Subobj)
+}
+
+#  Return the genes after DESqe analysis
+# DESeq_Genes<-function(p.data,p.val=0.05,num.genes=20,Order=TRUE,bar=TRUE){
+#   #  p.data: the data from DESeq analysis:genes,p.val
+#   #  p.val :the p.val cutoff
+#   #  Order: Wheter return the genes after p.val rank
+#   
+#   p.genes<-data.frame(na.omit(p.data))
+#   
+#   if(Order){
+#     p.genes<-p.genes[order(p.genes$p_val),,drop=FALSE]
+#   }
+#   
+#   genes<-rownames(p.genes)[which(p.genes$p_val<p.val)]
+#   p.genes<-p.genes[genes,,drop=FALSE]
+#   p.genes$gene<-genes
+#   
+#   if(bar){
+#     print(ggplot(data = p.genes[1:num.genes,,drop=FALSE])+xlab('gene')+
+#             geom_bar(aes(x=reorder(gene,-p_val),y=p_val,fill=gene),stat = 'identity')+
+#             theme(axis.text.x = element_text(face="bold",size=10,hjust = 1,angle = 90),
+#                   legend.position = 'none'))
+#   }
+#   return(genes)
+# }
+
+
+###  Barplot
+Group_Bar<-function(count.data,group,Gv.return=FALSE){
+  
+  if(dim(count.data)[2]!=length(group)){
+    stop('Invalid count data')
+  }
+  nGroups<-length(unique(group))
+  nGene<-dim(count.data)[1]
+  uniq.group<-unique(group)
+  
+  Group.per.gene.cov<-lapply(uniq.group,function(x){
+    counts<-rowSums(count.data[,group%in%x,drop=FALSE])/nGene
+    counts<-data.frame(counts)
+    colnames(counts)<-x
+    return(counts)
+  })
+  
+  Groups.converage<-as.data.frame(Group.per.gene.cov)
+  barplot(as.matrix(Groups.converage),beside = TRUE,ylab="Counts per gene")
+  
+  if(Gv.return){
+    return(Groups.converage)
+  }
+}
+```
+
+
+
+##   Step 2: Under the control  condition: 
+** Positive,Negative,Tube_1,Tube_2**  analysis
+
+##  Read condition data
+```{r}
+#  Read condition data
+human.condition.pro<-Load_data(data_dir = '../data/human.txt',
+                               condition.sample_dir = '../data/human.condition.sample.txt')
+important.genes<-c('ITGB4','ABCB5','KRT19','ACTB','KRT12','KRT5',
+                   'GAPDH','KRT3','PAX6','WNT7A','KRT14','TP63','KRT10')
+```
+
+##   Create Seurat object
+```{r,message=FALSE}
+#  Control condition
+control.condition<-human.condition.pro[[2]]
+control.sample.names<-colnames(human.condition.pro[[1]])
+
+human.part.DESeq<-DESeq_SeuratObj(X=human.condition.pro[[1]],DESq = FALSE,min.genes = 2,
+                                   condition = control.condition,condition.name = control.sample.names)
+```
+
+
+##   Figure explore
+```{r}
+
+table(human.part.DESeq@ident)
+Group_Bar(human.part.DESeq@raw.data,group = human.part.DESeq@ident)
+GenePlot(human.part.DESeq,gene1 = 'ITGB4',gene2 =important.genes[1])
+
+#  violon plot
+VlnPlot(human.part.DESeq,features.plot = 'ITGB4',y.lab.rot = 90)  # Violinn plot of gene ITGB in all sample
+VlnPlot(human.part.DESeq,features.plot = important.genes[important.genes%in%rownames(human.part.DESeq@raw.data)],y.lab.rot = 90)  # Violinn plot of gene ITGB in all sample
+
+```
+    According to the figure explore,we know that gene **ITGB4** expresses differently in the four control condition.It has more higher expression in ** Positive and Tube_1** control condition than other condition.And we try violin plot of the other four *variable genes* and bar plot of all genes ,they both have the similar result.
+    
+
+##  Dimensionality reduction
+###  **PCA** and **tSNE**
+
+```{r}
+# PCA  TSNE
+part.pbmc<-PCA.TSNE(object = human.part.DESeq,pcs.compute = FALSE,num.pcs = 7)
+```
+
+### After the PCA and tSNE,try plot: Featureplot of **ITGB4**,four var.genes,PCA plot,tSNE plot...
+```{r}
+# FeaturePlot(object = part.pbmc,features.plot ='ITGB4',pt.size = 4,no.legend = FALSE)  # ITGB4 gene in part dataset
+FeaturePlot(object = part.pbmc,features.plot =important.genes[important.genes%in%rownames(part.DESeq@raw.data)],
+            pt.size = 4,no.legend = FALSE,
+            reduction.use = 'pca')  # ITGB4 gene in part dataset
+
+
+DimPlot(part.pbmc,reduction.use = 'tsne',pt.size = 4)  #  grour by sample
+DimHeatmap(part.pbmc,reduction.type = 'pca',check.plot = FALSE)
+
+
+FeatureHeatmap(part.pbmc,features.plot = 'ITGB4',pt.size = 3,plot.horiz = TRUE,
+               cols.use = c("lightgrey", "blue"))
+```
+    The Faetureplot of *ITGB4* shows that,it only has high expression level in few samples,and expresss lowly in most sample.It means that may be *ITGB* express differently across sample.And the FeatureHeatmap and Heamap also comfirm this phenomeno.We try the other four variable genes,which has the similar result as gene *ITGB4*
+    But there is a problem that there is a  small  number of control sample.May be it will cause biases in analysis.
+    
+
+##  Differential expression
+    Next,we will have analysis on gene differential expression.Find maker genes across sample
+```{r,echo=FALSE}
+part_markers<-FindAllMarkers(part.pbmc,test.use = 'bimod',print.bar = FALSE)
+head(part_markers)
+"ITGB4"%in%part_markers$gene
+part_markers[which(part_markers$gene=='ITGB4'),]
+```
+    After the Differential expression analysis,we can get the the marker genes in differential expression  across control condition.The result is matrix contained *p_val,avg_logFC,p_val_adj, gene ..*.Of course the **ITGB4** gene is in the result matrix,But it is not significant(**p_val_adj>0.05**)
+across sample
+
+
+### Bar plot of gene's p.val
+```{r,echo=FALSE}
+genes.part.dp<-part_markers[,'p_val_adj',drop=FALSE]
+colnames(genes.part.dp)<-'p_val'
+human.p.part.genes<-DESeq_Genes(p.data = genes.part.dp)
+
+human.heatmap<-Heatmap_fun(genes =important.genes[important.genes%in%rownames(part.DESeq@raw.data)],
+                            tpm.data = part.pbmc@scale.data,
+                           condition = unique(as.character(part.pbmc@ident)),
+                           all.condition = as.character(part.pbmc@ident))
+
+NMF::aheatmap(human.heatmap[[2]], Rowv = NA, Colv = NA, annCol = human.heatmap[[1]], 
+              scale = "none")
+```
+
+     We  randomly select the genes(must containe gene **ITGB4**) from result of Differential expression.Draw the heatmap,the plot tells us that these genes actually express differently across sample.

@@ -1,0 +1,370 @@
+---
+title: "Monkey analysis:Positive and Negative(ITGB4)"
+author: "yejg"
+date: "2018/2/1"
+output:
+  word_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,message = FALSE,warning = FALSE,tidy = TRUE,fig.width=12, fig.height=10,highlight = TRUE)
+```
+
+### Load the packages
+```{r}
+library(Seurat)
+library(data.table)
+library(NMF)
+library(rsvd)
+library(Rtsne)
+library(ggplot2)
+library(cowplot)
+library(sva)
+library(igraph)
+library(cccd)
+library(KernSmooth)
+library(beeswarm)
+library(stringr)
+library(formatR)
+source('../tools.R')
+library(DESeq2)
+```
+
+###  Read data
+```{r}
+monkey.only.pro<-Load_data(data_dir = '../data/monkey.txt')
+rownames(monkey.only.pro)<-unlist(lapply(rownames(monkey.only.pro),str_to_upper))
+important.genes<-c('ITGB4','ABCB5','KRT19','ACTB','KRT12','KRT5',
+                   'GAPDH','KRT3','PAX6','WNT7A','KRT14','TRP63','KRT10')
+```
+
+```{r}
+monkey.all.pbmc<-DESeq_SeuratObj(X=monkey.only.pro,DESq = FALSE,min.cells = 10,min.genes = 2)
+all.sample.group<-unlist(lapply(monkey.all.pbmc@cell.names,function(x)return(str_split(x,'_')[[1]][1])))
+all.sample.size<-unlist(lapply(monkey.all.pbmc@cell.names,function(x)return(str_split(x,'_')[[1]][2])))
+#  reset ident
+monkey.all.pbmc<-SetIdent(monkey.all.pbmc,cells.use = monkey.all.pbmc@cell.names,ident.use = all.sample.size)
+
+monkey.imp.lognorm<-data.frame(FetchData(monkey.all.pbmc,vars.all = important.genes[important.genes%in%rownames(monkey.all.pbmc@raw.data)]))
+```
+
+```{r}
+library(ggplot2)
+library(reshape2)
+
+ITGB4<-as.numeric(monkey.imp.lognorm[,'ITGB4'])
+Positive.idx<-which(ITGB4>0)
+Negative.idx<-which(ITGB4==0)
+Positive.data<-monkey.imp.lognorm[Positive.idx,,drop=FALSE]
+Negative.data<-monkey.imp.lognorm[Negative.idx,,drop=FALSE]
+Positive.data<-Positive.data[,-1] # remove ITGB4
+Negative.data<-Negative.data[,-1]
+```
+
+## Figure Explore.1
+```{r}
+# Positive.t<-data.frame(as.matrix(LogNormalize(Positive.data,display.progress = FALSE)))
+# Negative.t<-data.frame(as.matrix(LogNormalize(Negative.data,display.progress = FALSE)))
+# Positive.t<-data.frame(t(Positive.t[important.genes,]))
+# Negative.t<-data.frame(t(Negative.t[important.genes,]))
+plot.data<-rbind(Positive.data,Negative.data)
+plot.data$condition<-rep(c('ITGB4+','ITGB4-'),times=c(dim(Positive.data)[1],dim(Negative.data)[1]))
+cell.size<-c(unlist(lapply(rownames(Positive.data),function(x) return(str_split(x,'_')[[1]][2]))),
+             unlist(lapply(rownames(Negative.data),function(x) return(str_split(x,'_')[[1]][2]))))
+
+
+plot.data$cell.size<-cell.size
+X<-melt(plot.data)
+```
+
+### Melt the data
+
+
+#### Violin
+```{r}
+# p<-ggplot(data = X,aes(y=value,x=condition,fill=cell.size))
+# p+geom_violin(trim = FALSE,scale = "width")+facet_wrap(~variable+condition)+
+#   geom_jitter()+guides(fill=guide_legend(title="Cell Size"))
+
+for (var in as.character(unique(X$variable))) {
+    p <- ggplot(data = X[X$variable == var, ], aes(y = value, x = condition, 
+        fill = cell.size))
+    print(p + geom_violin(trim = FALSE, scale = "width") + geom_jitter() + guides(fill = guide_legend(title = "Cell Size")) + 
+        ggtitle(label = var))
+}
+
+```
+
+#### Boxplot
+```{r}
+# p<-ggplot(data = X,aes(y=value,x=condition,fill=cell.size))
+# p+geom_boxplot()+guides(fill=guide_legend(title="Cell Size"))+facet_wrap(~variable+condition)
+for (var in as.character(unique(X$variable))) {
+    p <- ggplot(data = X[X$variable == var, ], aes(y = value, x = condition, 
+        fill = cell.size))
+    print(p + geom_boxplot() + guides(fill = guide_legend(title = "Cell Size")) + 
+        ggtitle(label = var))
+}
+```
+
+
+#### Density,histogram
+```{r}
+ggplot(data = X,aes(x=value,fill=variable))+
+  geom_density(kernel='gaussian')+scale_x_log10()+
+  facet_wrap(~condition+cell.size)
+
+
+ggplot(data = X,aes(x=value,fill=variable))+
+  geom_density(kernel='gaussian',position = 'stack')+scale_x_log10()+facet_wrap(~condition+cell.size)
+
+
+ggplot(data = X,aes(x=value,fill=variable))+
+   geom_histogram()+scale_x_log10()+facet_wrap(~condition+cell.size)
+
+
+```
+
+
+
+### Split the data according to whether the gene ITGB4 is Negative or negative
+```{r}
+ITGB4<-as.integer(monkey.only.pro['ITGB4',])
+Positive.idx<-which(ITGB4>0)
+Negative.idx<-which(ITGB4==0)
+Positive.data<-monkey.only.pro[,Positive.idx,drop=FALSE]
+Negative.data<-monkey.only.pro[,Negative.idx,drop=FALSE]
+```
+
+###  Create Seurat object and not caculate DESeq 
+#### Positive object
+```{r}
+Positive.pbmc<-DESeq_SeuratObj(X=Positive.data,min.cells = 10,min.genes = 2)
+Positive.sample.group<-unlist(lapply(Positive.pbmc@cell.names,function(x)return(str_split(x,'_')[[1]][1])))
+Positive.sample.cellsize<-unlist(lapply(Positive.pbmc@cell.names,function(x)return(str_split(x,'_')[[1]][2])))
+
+Positive.pbmc<-SetIdent(Positive.pbmc,cells.use = Positive.pbmc@cell.names,ident.use = Positive.sample.cellsize)
+```
+
+
+```{r}
+Pmonkey.imp.lognorm<-data.frame(FetchData(Positive.pbmc,vars.all = important.genes[important.genes%in%rownames(Positive.pbmc@raw.data)]))
+Pmonkey.imp.lognorm$cell.size<-unlist(lapply(rownames(Pmonkey.imp.lognorm),function(x)return(str_split(x,'_')[[1]][2])))
+Pmonkey.imp.lognorm$cell.sample<-unlist(lapply(rownames(Pmonkey.imp.lognorm),function(x)return(str_split(x,'_')[[1]][1])))
+Pmonkey.imp.lognorm.melt<-melt(Pmonkey.imp.lognorm)
+```
+
+
+#### Negative object
+```{r}
+Negative.pbmc<-DESeq_SeuratObj(X=Negative.data,min.cells = 10,min.genes = 2)
+Negative.sample.group<-unlist(lapply(Negative.pbmc@cell.names,function(x)return(str_split(x,'_')[[1]][1])))
+Negative.sample.cellsize<-unlist(lapply(Negative.pbmc@cell.names,function(x)return(str_split(x,'_')[[1]][2])))
+
+Negative.pbmc<-SetIdent(Negative.pbmc,cells.use = Negative.pbmc@cell.names,ident.use = Negative.sample.cellsize)
+```
+
+```{r}
+Nmonkey.imp.lognorm<-data.frame(FetchData(Negative.pbmc,vars.all = important.genes[important.genes%in%rownames(Negative.pbmc@raw.data)]))
+Nmonkey.imp.lognorm$cell.size<-unlist(lapply(rownames(Nmonkey.imp.lognorm),function(x)return(str_split(x,'_')[[1]][2])))
+Nmonkey.imp.lognorm$cell.sample<-unlist(lapply(rownames(Nmonkey.imp.lognorm),function(x)return(str_split(x,'_')[[1]][1])))
+
+Nmonkey.imp.lognorm.melt<-melt(Nmonkey.imp.lognorm)
+```
+
+Accordind to the Dispersion vs Avearge expression of Positive and Negative data on ITGB4,they tell us that the although they have similar shape and trend,dispersion of Positive data is more significant than Negative in some genes.
+
+## Step 1: analysis on Positive data
+## Figure Explore
+###  First,use the plot,eg. Barplot,Violin...,we can explore some message from sample
+
+
+```{r}
+Group_Bar(Positive.pbmc@raw.data,group =Positive.sample.group)
+Group_Bar(Positive.pbmc@raw.data,group = Positive.sample.cellsize)
+
+VlnPlot(Positive.pbmc,features.plot = important.genes[important.genes%in%rownames(Positive.pbmc@raw.data)],y.lab.rot = 90)  # Violinn plot of gene ITGB in all sample
+```
+
+##  Dimensionality reduction
+###  **PCA** and **tSNE**
+    Here,do the dimensionality reduction using the PCA, tSNE method 
+
+*It will take a long time to caculate significant pcs.So,here we use the default value*
+```{r}
+Positive.pbmc<-PCA.TSNE(object = Positive.pbmc,pcs.compute =FALSE,num.pcs = 28)
+```
+
+
+### After the PCA and tSNE,try plot: Featureplot of **ITGB4**,four var.genes,PCA plot,tSNE plot...
+```{r}
+FeaturePlot(object = Positive.pbmc,features.plot=
+              important.genes[important.genes%in%rownames(Positive.pbmc@raw.data)],
+            pt.size = 1,no.legend = FALSE,
+            reduction.use = 'pca')  # ITGB4 gene in part dataset
+
+FeaturePlot(object = Positive.pbmc,features.plot=
+              important.genes[important.genes%in%rownames(Positive.pbmc@raw.data)],
+            pt.size = 1,no.legend = FALSE,
+            reduction.use = 'tsne')  # ITGB4 gene in part dataset
+
+DimPlot(Positive.pbmc,reduction.use = 'tsne',pt.size = 4)  #  grour by sample
+DimPlot(Positive.pbmc,reduction.use = 'pca',pt.size = 4)  #  grour by sample
+DimHeatmap(Positive.pbmc,reduction.type = 'pca',check.plot = FALSE)
+
+```
+
+   
+##  Differential expression
+    Next,we will have analysis on gene differential expression.Find maker genes across sample.We use the method: **wilcox test**
+```{r}
+#  Finds markers (differentially expressed genes) for each of the identity classes in a dataset
+Positive.markers<-FindAllMarkers(Positive.pbmc,test.use = 'bimod',print.bar = FALSE)
+head(Positive.markers)
+```
+
+### Bar plot of gene's p.val
+```{r,echo=FALSE}
+genes.positive.dp<-Positive.markers[,'p_val_adj',drop=FALSE]
+colnames(genes.positive.dp)<-'p_val'
+Positive.p.genes<-DESeq_Genes(p.data = genes.positive.dp)
+```
+
+
+### Poistive Heatmap for important genes
+```{r}
+Positive.heatmap<-Heatmap_fun(genes                     =important.genes[important.genes%in%rownames(Positive.pbmc@raw.data)],
+                           tpm.data = Positive.pbmc@scale.data,
+                           condition = unique(as.character(Positive.pbmc@ident)),
+                           all.condition = as.character(Positive.pbmc@ident))
+
+NMF::aheatmap(Positive.heatmap[[2]], Rowv = NA, Colv = NA, annCol =Positive.heatmap[[1]], 
+              scale = "none")
+
+```
+
+We have find all marker genes across sample,there are `r length(which(Positive.markers$p_val_adj<0.05))` significant genes(adjust p-value <0.05) in all marker genes.
+  
+###  Next,Spectral k-means clustering on single cells based on PCA
+```{r}
+Positive.pbmc<-KClustDimension(Positive.pbmc,reduction.use = 'pca',k.use = 3)
+clusters.pca<-Positive.pbmc@meta.data$kdimension.ident
+DimPlot(Positive.pbmc,pt.size = 4,group.by ='kdimension.ident')
+```
+
+### Spectral k-means clustering on single cells based on tSNE
+```{r}
+Positive.pbmc<-KClustDimension(Positive.pbmc,reduction.use = 'tsne',k.use = 3)
+clusters.tsne<-Positive.pbmc@meta.data$kdimension.ident
+DimPlot(Positive.pbmc,pt.size = 4,group.by ='kdimension.ident',reduction.use = 'tsne')
+```
+
+
+###  Positive: Anova analsis:test the important genes'mean between cell size,cell groups ,whether is equal
+
+#### anavo analysis
+```{r}
+for(gene in unique(Pmonkey.imp.lognorm.melt$variable)){
+  aov.gene<-Anova.gene(data =Pmonkey.imp.lognorm.melt,gene = gene,tuk.which = 'cell.size',
+                       inter = FALSE,plot.aov = FALSE)
+}
+```
+
+
+
+## Step 1: analysis on Negative data
+## Figure Explore
+###  First,use the plot,eg. Barplot,Violin...,we can explore some message from sample
+
+
+```{r}
+Group_Bar(Negative.pbmc@raw.data,group =Negative.sample.group)
+Group_Bar(Negative.pbmc@raw.data,group = Negative.sample.cellsize)
+
+VlnPlot(Negative.pbmc,features.plot = important.genes[important.genes%in%rownames(Negative.pbmc@raw.data)],y.lab.rot = 90)  # Violinn plot of gene ITGB in all sample
+```
+
+##  Dimensionality reduction
+###  **PCA** and **tSNE**
+    Here,do the dimensionality reduction using the PCA, tSNE method 
+
+*It will take a long time to caculate significant pcs.So,here we use the default value*
+```{r}
+Negative.pbmc<-PCA.TSNE(object = Negative.pbmc,pcs.compute =FALSE,num.pcs = 28)
+```
+
+
+### After the PCA and tSNE,try plot: Featureplot of **ITGB4**,four var.genes,PCA plot,tSNE plot...
+```{r}
+FeaturePlot(object = Negative.pbmc,features.plot=
+              important.genes[important.genes%in%rownames(Negative.pbmc@raw.data)],
+            pt.size = 1,no.legend = FALSE,
+            reduction.use = 'pca')  # ITGB4 gene in part dataset
+
+FeaturePlot(object = Negative.pbmc,features.plot=
+              important.genes[important.genes%in%rownames(Negative.pbmc@raw.data)],
+            pt.size = 1,no.legend = FALSE,
+            reduction.use = 'tsne')  # ITGB4 gene in part dataset
+
+DimPlot(Negative.pbmc,reduction.use = 'tsne',pt.size = 4)  #  grour by sample
+DimPlot(Negative.pbmc,reduction.use = 'pca',pt.size = 4)  #  grour by sample
+DimHeatmap(Negative.pbmc,reduction.type = 'pca',check.plot = FALSE)
+
+```
+
+
+##  Differential expression
+    Next,we will have analysis on gene differential expression.Find maker genes across sample.We use the method: **wilcox test**
+```{r}
+#  Finds markers (differentially expressed genes) for each of the identity classes in a dataset
+Negative.markers<-FindAllMarkers(Negative.pbmc,test.use = 'bimod',print.bar = FALSE)
+head(Negative.markers)
+```
+
+### Bar plot of gene's p.val
+```{r,echo=FALSE}
+genes.Negative.dp<-Negative.markers[,'p_val_adj',drop=FALSE]
+colnames(genes.Negative.dp)<-'p_val'
+Negative.p.genes<-DESeq_Genes(p.data = genes.Negative.dp)
+```
+
+
+### Poistive Heatmap for important genes
+```{r}
+Negative.heatmap<-Heatmap_fun(genes                     =important.genes[important.genes%in%rownames(Negative.pbmc@raw.data)],
+                           tpm.data = Negative.pbmc@scale.data,
+                           condition = unique(as.character(Negative.pbmc@ident)),
+                           all.condition = as.character(Negative.pbmc@ident))
+
+NMF::aheatmap(Negative.heatmap[[2]], Rowv = NA, Colv = NA, annCol =Negative.heatmap[[1]], 
+              scale = "none")
+
+```
+
+We have find all marker genes across sample,there are `r length(which(Negative.markers$p_val_adj<0.05))` significant genes(adjust p-value <0.05) in all marker genes.
+  
+###  Next,Spectral k-means clustering on single cells based on PCA
+```{r}
+Negative.pbmc<-KClustDimension(Negative.pbmc,reduction.use = 'pca',k.use = 3)
+clusters.pca<-Negative.pbmc@meta.data$kdimension.ident
+DimPlot(Negative.pbmc,pt.size = 4,group.by ='kdimension.ident')
+```
+
+### Spectral k-means clustering on single cells based on tSNE
+```{r}
+Negative.pbmc<-KClustDimension(Negative.pbmc,reduction.use = 'tsne',k.use = 3)
+clusters.tsne<-Negative.pbmc@meta.data$kdimension.ident
+DimPlot(Negative.pbmc,pt.size = 4,group.by ='kdimension.ident',reduction.use = 'tsne')
+```
+
+
+###  Negative: Anova analsis:test the important genes'mean between cell size,cell groups ,whether is equal
+
+#### anavo analysis
+```{r}
+for(gene in unique(Nmonkey.imp.lognorm.melt$variable)){
+  aov.gene<-Anova.gene(data =Nmonkey.imp.lognorm.melt,gene = gene,tuk.which = 'cell.size',
+                       inter = FALSE,plot.aov = FALSE)
+}
+```

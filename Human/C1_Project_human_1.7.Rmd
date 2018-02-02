@@ -1,0 +1,134 @@
+---
+title: "Deep analysis on human"
+author: "yejg"
+date: "2018/1/31"
+output:
+  word_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,message = FALSE,warning = FALSE,tidy = TRUE,fig.width=12, fig.height=10,highlight = TRUE)
+```
+
+### Load the packages
+```{r}
+library(Seurat)
+library(data.table)
+library(NMF)
+library(rsvd)
+library(Rtsne)
+library(ggplot2)
+library(cowplot)
+library(sva)
+library(igraph)
+library(cccd)
+library(KernSmooth)
+library(beeswarm)
+library(stringr)
+library(formatR)
+source('../tools.R')
+library(DESeq2)
+```
+
+## Step 1: All data: Analysis based on sample group
+###  Read data
+###  Data QA
+```{r}
+human.only.pro<-Load_data(data_dir = '../data/human.txt')
+important.genes<-c('ITGB4','ABCB5','KRT19','ACTB','KRT12','KRT5',
+                   'GAPDH','KRT3','PAX6','WNT7A','KRT14','TP63','KRT10')
+human.only.pro<-human.only.pro[,colnames(human.only.pro)[unlist(lapply(colnames(human.only.pro),
+                    function(x)return(str_split(x,'_')[[1]][2])))%in%c('10um','20um','6um')]]
+human.only.pro<-human.only.pro[,colnames(human.only.pro)[!unlist(lapply(colnames(human.only.pro),
+                             function(x)return(str_split(x,'_')[[1]][1])))%in%c('hc001','shoutiao')]]
+
+table(unlist(lapply(colnames(human.only.pro),
+                    function(x)return(str_split(x,'_')[[1]][2]))))
+table(unlist(lapply(colnames(human.only.pro),
+                    function(x)return(str_split(x,'_')[[1]][1]))))
+```
+
+###  Create Seurat object and not caculate DESeq,but set **min.cells=10** and **min.genes=2** 
+```{r}
+# only select the cells contain 10 genes expressed at least,select the genes must be expressed in two cells at least
+human.all.pbmc<-DESeq_SeuratObj(X=human.only.pro,DESq = FALSE,min.cells = 10,min.genes = 2)
+all.sample.group<-unlist(lapply(human.all.pbmc@cell.names,function(x)return(str_split(x,'_')[[1]][1])))
+all.sample.size<-unlist(lapply(human.all.pbmc@cell.names,function(x)return(str_split(x,'_')[[1]][2])))
+#  reset ident
+human.all.pbmc<-SetIdent(human.all.pbmc,cells.use = human.all.pbmc@cell.names,ident.use = all.sample.size)
+table(all.sample.group,all.sample.size)
+```
+
+##  Dimensionality reduction
+###  **PCA** and **tSNE**
+    Here,do the dimensionality reduction using the PCA, tSNE method 
+```{r}
+all.pbmc<-PCA.TSNE(object = human.all.pbmc,pcs.compute =FALSE,num.pcs = 28)
+```
+
+```{r}
+DimPlot(all.pbmc,reduction.use = 'tsne',pt.size = 4)  
+DimPlot(all.pbmc,reduction.use = 'pca',pt.size = 4)  
+```
+
+
+###  In the sample cell size,compare the sample distribution
+```{r}
+pca<-data.frame(all.pbmc@dr$pca@cell.embeddings)
+tsne<-data.frame(all.pbmc@dr$tsne@cell.embeddings)
+pca$cell.size<-all.sample.size
+pca$cell.group<-all.sample.group
+tsne$cell.size<-all.sample.size
+tsne$cell.group<-all.sample.group
+```
+####  PCA method
+```{r}
+ggplot(data=pca)+geom_point(aes(x=PC1,y=PC2),color='red')+
+  geom_density2d(aes(x=PC1,y=PC2),contour=TRUE)+
+  facet_wrap(~cell.size+cell.group)
+```
+
+#### tSNE method
+```{r}
+ggplot(data=tsne)+geom_point(aes(x=tSNE_1,y=tSNE_2),color='red')+
+  geom_density2d(aes(x=tSNE_1,y=tSNE_2),contour=TRUE)+facet_wrap(~cell.size+cell.group)
+```
+
+####  density method
+```{r}
+human.lognorm<-data.frame(FetchData(all.pbmc,vars.all =all.pbmc@var.genes))
+human.lognorm$cell.size<-all.sample.size
+human.lognorm$cell.group<-all.sample.group
+human.lognorm.melt<-melt(human.lognorm)
+```
+
+```{r}
+ggplot(data = human.lognorm.melt,aes(x=value))+
+  geom_density(kernel='gaussian',fill='red')+scale_y_sqrt()+scale_x_sqrt()+facet_wrap(~cell.size+cell.group)
+```
+
+
+
+####  the Kolmogorov–Smirnov test (K–S test or KS test) is a nonparametric test of the equality of continuous, one-dimensional probability distributions that can be used to compare a sample with a reference probability distribution (one-sample K–S test), or to compare two samples (two-sample K–S test)
+
+##### The null distribution of this statistic is calculated under the null hypothesis that the sample is drawn from the reference distribution (in the one-sample case) or that the samples are drawn from the same distribution (in the two-sample case). In each case, the distributions considered under the null hypothesis are continuous distributions but are otherwise unrestricted
+```{r}
+size.group.table<-as.data.frame(as.matrix(table(all.sample.group,all.sample.size)))
+size.group.table<-size.group.table[size.group.table$Freq>0,]  # only test cell size,group both not null
+```
+###  6um:under the cell size 6um test
+```{r}
+KS.test.comb(all.pbmc,genes = important.genes,cell_size = '6um')
+```
+
+###  10um:under the cell size 10um test
+```{r}
+KS.test.comb(all.pbmc,genes = important.genes,cell_size = '10um')
+```
+     
+     
+###  20um:under the cell size 20um test
+```{r}
+KS.test.comb(all.pbmc,genes = important.genes,cell_size = '20um')
+```
