@@ -21,6 +21,7 @@
 
 ## 3)使用的工具 **rstudio**
 主要使用的 r packages：
+``` r
 library(Seurat) 
 library(data.table) 
 library(NMF)
@@ -37,5 +38,5 @@ library(stringr)
 library(formatR)
 source('../tools.R')  #自己写的一些工具函数
 library(DESeq2)
-
+```
 不一一介绍安装（自己google，度娘去）
