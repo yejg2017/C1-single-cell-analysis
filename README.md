@@ -22,8 +22,8 @@
 ## 3)使用的工具 **rstudio**
 主要使用的 r packages：
 ``` r
-library(Seurat)//r
-library(data.table) //r
+library(Seurat)
+library(data.table) 
 library(NMF)//r
 library(rsvd)//r
 library(Rtsne)//r
@@ -39,4 +39,16 @@ library(formatR)
 source('../tools.R')  #自己写的一些工具函数
 library(DESeq2)
 ```
-不一一介绍安装（自己google，度娘去）,**Seurat**是主要的分析工具，重要的事情说三遍
+不一一介绍安装（自己google，度娘去）,**Seurat,ggplot2**是主要的分析工具，重要的事情说三遍
+
+## 4)结果展示
+结果都以*markdown*的格式展示在各自文件夹**Human.Monkey,Mouse**的*docx,html*文件中
+
+## 5）示例图片
+
+
+
+
+
+
+
