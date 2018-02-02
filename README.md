@@ -22,11 +22,11 @@
 ## 3)使用的工具 **rstudio**
 主要使用的 r packages：
 ``` r
-library(Seurat) 
-library(data.table) 
-library(NMF)
-library(rsvd)
-library(Rtsne)
+library(Seurat)//r
+library(data.table) //r
+library(NMF)//r
+library(rsvd)//r
+library(Rtsne)//r
 library(ggplot2)
 library(cowplot)
 library(sva)
@@ -39,4 +39,4 @@ library(formatR)
 source('../tools.R')  #自己写的一些工具函数
 library(DESeq2)
 ```
-不一一介绍安装（自己google，度娘去）
+不一一介绍安装（自己google，度娘去）,**Seurat**是主要的分析工具，重要的事情说三遍
