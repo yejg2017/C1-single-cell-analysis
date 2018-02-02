@@ -45,8 +45,12 @@ library(DESeq2)
 结果都以*markdown*的格式展示在各自文件夹**Human.Monkey,Mouse**的*docx,html*文件中
 
 ## 5）示例图片
+![C1 picture1](https://github.com/yejg2017/C1-single-cell-analysis/blob/master/%E5%9B%BE%E7%89%871png)
+![C1 picture2](https://github.com/yejg2017/C1-single-cell-analysis/blob/master/%E5%9B%BE%E7%89%872.png)
+![C1 picture3](https://github.com/yejg2017/C1-single-cell-analysis/blob/master/%E5%9B%BE%E7%89%873.png)
+![C1 picture4](https://github.com/yejg2017/C1-single-cell-analysis/blob/master/%E5%9B%BE%E7%89%874.png)
 ![C1 picture5](https://github.com/yejg2017/C1-single-cell-analysis/blob/master/%E5%9B%BE%E7%89%875.png)
-
+![C1 picture6](https://github.com/yejg2017/C1-single-cell-analysis/blob/master/%E5%9B%BE%E7%89%876.png)
 
 
 
