@@ -41,6 +41,11 @@
 * Step 3伪时间分析
 [SingleCell-Pseudotime](./SingleCell-Pseudotime.ipynb)主要用[monocle](https://cole-trapnell-lab.github.io/monocle-release/)分析
 分析流程参考monocle教程
+![demo1](./ps-1.png)
+
+![demo2](./ps-2.png)
+
+文件夹主要是放一下保存的图片，比如SingleCellPlot，Picture，以及一些其他的文件，都是一些分析留下的笔记而已，哈哈
 
 
 
