@@ -1,0 +1,12 @@
+IFE-basal: Krt5 Krt14 Mt1 Thbs1
+
+IFE-DI: Krt10 clam4 Sbsn Lvl 
+
+uHF: Krt79 Defb6 Cst6 Lrig1
+
+SG: Mgst1
+
+HF-bulge: Krt6a Postn Krt24 Lgr5 Krt75
+
+Integrins: Itgb4 Itgb1 Itga6 Itga3
+
