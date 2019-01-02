@@ -38,9 +38,10 @@
 
 ![heatmap](./SingleCellPlot/Total-heatmap.png)
 
-这一步，进行伪时间分析
+* Step 3伪时间分析
 [SingleCell-Pseudotime](./SingleCell-Pseudotime.ipynb)主要用[monocle](https://cole-trapnell-lab.github.io/monocle-release/)分析
 分析流程参考monocle教程
+
 
 
 
