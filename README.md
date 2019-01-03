@@ -1,6 +1,6 @@
 # This is the code for WeiYa'paper
 
-## Paper: Differential Expression of α6 and β1 Integrins in Skin Epidermis Reveals Stem Cell Behavior and Heterogeneity at Single-Cell Resolution
+##    Differential Expression of α6 and β1 Integrins in Skin Epidermis Reveals Stem Cell Behavior and Heterogeneity at Single-Cell Resolution
 
 ### 环境：R
 主要工具包：Seurat,ggplot2,NMF,jupyter-notebook等
